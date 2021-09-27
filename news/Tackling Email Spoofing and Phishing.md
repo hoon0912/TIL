@@ -97,4 +97,76 @@ catch-all 메커니즘은 +(Allow), ~(Softfail), -(Fail)을 우선적으로 등�
 
 ## DKIM (DomainKeys Identified Mail)
 
+SPF를 사용하여 혀용된 IP 주소만 특정 도메인으로 이메일을 보낼 수 있도록 했다.  
+하지만 만약 IP가 변경되고 SPF 레코드가 업데이트 되지 않거나, 동일한 Google Email Server(클라우드)를 사용해서 동일한 IP에서 메일을 보내도록 하면 어떻게 될까?  
+이러한 경우를 위해 DKIM이 필요하다.  
+DKIM은 이메일의 일부(보통 본문 및 특정 헤더)를 암호화 하여 메일의 서명을 제공한다.  
+이에 대해 자세히 알아보기 전에 cloudflare.com에 사용된 DKIM 레코드를 살펴보자
 
+```aidl
+google._domainkey.cloudflare.com.   TXT   "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDMxbNxA2V84XMpZgzMgHHey3TQFvHkwlPF2a11Ex6PGD71Sp8elVMMCdZhPYqDlzbehg9aWVwPz0+n3oRD73o+JXoSswgUXPV82O8s8dGny/BAJklo0+y+Bh2Op4YPGhClT6mRO2i5Qiqo4vPCuc6GB34Fyx7yhreDNKY9BNMUtQIDAQAB"
+```
+
+DKIM의 구조는 <selector>._domainkey.<domain> 이다. selector는 이메일 제공자를 의미한다.  
+DKIM TXT 레코드는 항상 v=DKIM1으로 시작된다. 그 후에 public key type(k 태그), public key(p 태그)를 확인 할 수 있다  
+아래는 DKIM이 어떤식으로 동작하는지 순서를 보여준다.
+1. email server는 이메일 본문으로부터 hash 값을 생성한다
+2. email server는 hash 값을 DKIM private key로 암호화한다.
+3. 암호화 된 해시 값이 이메일에 포함 된 상태로 이메일이 전송된다.
+4. email receiving server는 해당 도메인에 대한 DKIM TXT를 검색한다
+5. DKIM public key를 사용해서 복호화한다.
+6. email receiving server는 이메일 본문으로부터 hash 값을 생성한다.
+7. 앞서 복호화 한 hash값이랑 직접 구한 hash값이 같은지 비교한다
+
+## DMRAC(Domain-based Message Authentication Reporting and Conformance)
+DMARC는 Reporting과 Conformance에 대한 메커니즘을 제공해준다.  
+Reporting은 이메일 발신자가 얼마나 부적절한 이메일을 받았는지 알 수 있게 한다.  
+Conformance는 이메일 수신자가 이메일을 처리하는 기준을 명확하게 제공해준다.  
+이메일 수신자는 DMARC 레코드가 없어도 SPF 또는 DKIM 검사에 실패한 이메일에 자체 기준을 적용할 수 있다.  
+그러나, DMARC 레코드에 구성된 정책(기준)은 이메일 발신자가 명시한 지침이므로 더 자신있게 처리할 수 있다.  
+
+아래는 cloudflare.com의 DMARC 레코드이다
+```aidl
+_dmarc.cloudflare.com.   TXT   "v=DMARC1; p=reject; pct=100; rua=mailto:rua@cloudflare.com"
+```
+
+DMARC TXT 레코드의 구조는 _dmarc.<domain> 이다.  
+그 후에 항상 v=DMARC1 이 따라온다. 그 이후에는 3개의 태그 정보가 있다.  
+p태그는 만약 이메일 수신자가 SPF 또는 DKIM 체크에서 실패한 경우 어떻게 처리해야 할지를 명시한다.  
+none,reject,quarantine 중에 값을 지정할 수 있으며 none 정책은 오로지 모니터링 용도로만 사용되며 체크 실패한 이메일을 정상으로 판단해버린다  
+quarantine은 이메일 수신자가 SPF 또는 DKIM 체크에서 실패한 경우 스팸 폴더로 이메일을 보내버린다  
+reject는 SPF 또는 DKIM 체크에서 실패한 경우 이메일을 버려버린다
+
+퍼센테이지 태그(pct)는 설명 생략
+
+마지막 태그인 rua는 리포팅 URI를 지정한다.  
+SPF 또는 DKIM 체크에서 실패한 이메일들을 취합해서 그 레포트를 보내는 이메일 주소를 의미한다.  
+
+![7](https://blog.cloudflare.com/content/images/2021/09/image10-5.png)
+
+위 그림은 DMARC가 어떻게 동작하는지를 나타낸다.
+1. From 헤더 값에 hannes@mycoolwebpage.xyz을 가지고 있는 이메일이 전송되었다
+2. 이메일 수신자는 mycoolwebpage.xyz 도메인에 대한 SPF, DKIM, DMARC를 검색한다.  
+3. 이메일 수신자는 SPF 와 DKIM 체크를 수행한다. 만약 둘 다 성공한 경우 해당 메일은 정상으로 분류된다. 만약 둘 중에 하나라도 실패한 경우 DMARC 정책이 정상 / 비정상 유무를 결정한다.
+4. 마지막으로 이메일 수신자는 그 결과를 집계해서 레포트를 반환한다. 
+
+## A few numbers on the current adoption
+
+이제 우리는 SPF, DKIM, DMARC에 대해 배웠다.  
+이 기술이 얼마나 지혜롭게 널리 사용되고 있는지 확인해보자
+
+2020년 말까지 50% 미만의 도메인만 DMARC 레코드를 보유하고 있는 것을 확인 하였다  
+DMARC 레코드가 없으면 SPF 및 DKIM 검사가 명확하게 시행되지 않는다는 것을 다시 떠올려보자  
+또한 DMARC 레코드를 가지고 있는 도메인 중에서 65% 이상이 단순 모니터링 정책 옵션(p=none)을 사용하고 있음을 확인하였다  
+
+![8](https://blog.cloudflare.com/content/images/2021/09/image2-37.png)
+
+2021년 8월 1일 또 다른 보고서는 은행 부문에 속하는 도메인에 대한 통계를 제공한다.  
+미국의 2,881개의 은행 중 44%만이 DMARC 레코드를 제공한다. DMARC 레코드가 있더라도 5개 중 2개는 p=none으로 설정했다.  
+덴마크는 94%의 은행 도메인이 DMARC를 사용하고 있는 반면에 일본은 오직 13%만이 DMARC를 사용하고 있다.  
+SPF이 적용 된 비율은 상당히 높은데 이는 SPF 표준이 2006년에 처음 도입되었고 2015년에 DMARC가 표준이 되었다는 사실과 관련이 있을 수 있다. 
+
+## 생략
+
+이 밑 부분은 SPF, DKIM, DMARC를 UI에서 쉽게 설정하는 자사의 새로운 서비스 소개임  
+개인적으로 궁금하다면 Source 링크타고 확인할 것
